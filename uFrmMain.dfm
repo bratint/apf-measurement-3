@@ -156,7 +156,7 @@ object frmMain: TfrmMain
         Top = 128
         Width = 49
         Height = 17
-        Caption = #1041#1055#1060
+        Caption = #1044#1055#1060
         TabOrder = 3
       end
       object edDacOutput: TEdit

@@ -22,7 +22,7 @@ type
     Steps: Integer; // число шагов по частоте
     Delay: Integer; // задержка перед началом измерения, мс
     NeedWatch: Boolean; // признак необходимости корректировать параметры в соответствии с частотой резонанса
-    MagnitudeMovingAveragePointsCount, PhaseMovingAveragePointsCount, PhaseDerivativeMovingAveragePointsCount: Integer; // число точек для сглаживания
+    MagnitudeMovingAveragePointsCount, PhaseMovingAveragePointsCount, PhaseDerivativeMovingAveragePointsCount, FrequencyMovingAveragePointsCount: Integer; // число точек для сглаживания
   end;
 
   TStartMeasureParameters = class // набор параметров, устанавливаемых при старте процесса измерения
@@ -39,7 +39,7 @@ type
     Series: Boolean; // непрерывная серия измерений
     constructor Create;
     destructor Destroy; override;
-    procedure AddResonance(const AResonantFrequencyHz, AMinusFrequencyHz, APlusFrequencyHz: Double; const ASteps, ADelay: Integer; const ANeedWatch: Boolean; const AMagnitudePointsCount, APhasePointsCount, APhaseDerivativePointsCount: Integer);
+    procedure AddResonance(const AResonantFrequencyHz, AMinusFrequencyHz, APlusFrequencyHz: Double; const ASteps, ADelay: Integer; const ANeedWatch: Boolean; const AMagnitudePointsCount, APhasePointsCount, APhaseDerivativePointsCount, AFrequencyMovingAveragePointsCount: Integer);
     property Resonances: TObjectList<TResonanceMeasurementParameters> read FResonances;
   end;
 
@@ -163,6 +163,18 @@ type
     function ReducedImageToPhaseDerivativeValue(const ATop: Integer): Double; // преобразовать координату в производную фазы
   end;
 
+  TDateTimeArray = array of TDateTime;
+
+  TSmoothFreqData = class // класс для сглаженной зависимости частоты от времени
+  public
+    ResonanceIndex, FrequencyMovingAveragePointsCount: Integer;
+    TimeSmooth: TDateTimeArray;
+    ResonanceFrequencyHzSmooth: TDoubleArray;
+    constructor Create(const AResonanceIndex, AMovingAveragePointsCount: Integer);
+    destructor Destroy; override;
+    procedure Recalc(AMeasurementResults: TObjectList<TResonanceMeasurementResult>; const AFromIndex: Integer);
+  end;
+
   TFileSaver = class
   private const
     FILE_FORMAT_VERSION: Integer = 1;
@@ -186,7 +198,9 @@ type
 
   TExcelSaver = class
   private const
-    DEFAULT_COLUMN_WIDTH = 15;
+    DEFAULT_COLUMN_WIDTH = 10;
+    TIME_COLUMN_WIDTH = 8;
+    HIDE_COLUMN_WIDTH = 1;
   private
     FCriticalSection: TCriticalSection;
     FFolderPath, FFileName: String;
@@ -208,8 +222,9 @@ type
     destructor Destroy; override;
 
     procedure Initialize(const AFileName: String; const AResonancesCount: Integer; const ASeries, AFourierAnalysis: Boolean; const AStartTime: TDateTime);
-    procedure AddNewResult(const AResonanceIndex: Integer; ASource: TResonanceMeasurementResult);
+    procedure AddNewResult(const AResonanceIndex: Integer; ASource: TResonanceMeasurementResult; const AStartTime: TDateTime);
     procedure UpdateLastResult(const AResonanceIndex: Integer; ASource: TResonanceMeasurementResult);
+    procedure WriteSmoothedFrequency(ASource: TSmoothFreqData; const AStartTime: TDateTime);
   end;
 
   TMeasurementResult = class // результат измерения
@@ -224,7 +239,10 @@ type
     FNeedSaveToExcel: Boolean;
     FNeedInitializeExcelSaver: Boolean;
     FExcelSaver: TExcelSaver;
-    FSaveToExcelQueue: TObjectList<TResonanceMeasurementResult>;
+    FMeasurementResults: TObjectList<TResonanceMeasurementResult>;
+    FLastSavedIndex, FFirstItemIndexInExcel: Integer;
+    FSmoothFreqData: TObjectList<TSmoothFreqData>;
+    FHasWriteToExcel: Boolean;
 
     procedure Lock; inline;
     procedure Unlock; inline;
@@ -241,6 +259,7 @@ type
     function GetFrequencyRange(const AResonanceIndex: Integer): TResonanceWatchingData; // потокобезопасное получение диапазона измеряемых частот
     procedure SetFrequencyRange(const AResonanceIndex: Integer; const AResonantFrequencyHz, AMinusFrequencyHz, APlusFrequencyHz: Double; const ASteps, ADelay: Integer; const ANeedWatch: Boolean); // потокобезопасная установка диапазона измеряемых частот
     procedure SetMovingAverageParams(const AResonanceIndex, AMagnitudePointsCount, APhasePointsCount, APhaseDerivativePointsCount: Integer); // потокобезопасная установка параметров сглаживания
+    procedure SetFrequencyMovingAverageParams(const AResonanceIndex, AFrequencyPointsCount: Integer); // потокобезопасная установка параметров сглаживания по частоте
     procedure GetReducedImagePlots(const AImageHeight, AImageWidth, ATopBorder, ABottomBorder, AResonanceIndex: Integer;
         out APhaseDefined: Boolean; out AMagnitude, AMagnitudeSmooth, APhase, APhaseSmooth, APhaseDerivative, APhaseDerivativeSmooth: TReducedImagePlot; out AMagnitudeResonance, APhaseResonance: TPoint); // потокобезопасное получение графиков
     function ReducedImageToFrequencyValue(const AResonanceIndex, ALeft: Integer): Double; // потокобезопасное преобразование координаты в частоту
@@ -250,6 +269,7 @@ type
 
     function AddDataToExcel(out ANeedTryAgain: Boolean; out AErrorDescription: String): Boolean;
     procedure UpdateLastResultInExcel(const AResonanceIndex: Integer);
+    procedure WriteSmoothedFrequencyToExcel(const AResonanceIndex: Integer);
 
     property NeedSaveToExcel: Boolean read FNeedSaveToExcel write SetNeedSaveToExcel;
   end;
@@ -400,7 +420,7 @@ begin
   inherited Destroy;
 end;
 
-procedure TStartMeasureParameters.AddResonance(const AResonantFrequencyHz, AMinusFrequencyHz, APlusFrequencyHz: Double; const ASteps, ADelay: Integer; const ANeedWatch: Boolean; const AMagnitudePointsCount, APhasePointsCount, APhaseDerivativePointsCount: Integer);
+procedure TStartMeasureParameters.AddResonance(const AResonantFrequencyHz, AMinusFrequencyHz, APlusFrequencyHz: Double; const ASteps, ADelay: Integer; const ANeedWatch: Boolean; const AMagnitudePointsCount, APhasePointsCount, APhaseDerivativePointsCount, AFrequencyMovingAveragePointsCount: Integer);
 var
   LResonance: TResonanceMeasurementParameters;
 begin
@@ -414,6 +434,7 @@ begin
   LResonance.MagnitudeMovingAveragePointsCount := AMagnitudePointsCount;
   LResonance.PhaseMovingAveragePointsCount := APhasePointsCount;
   LResonance.PhaseDerivativeMovingAveragePointsCount := APhaseDerivativePointsCount;
+  LResonance.FrequencyMovingAveragePointsCount := AFrequencyMovingAveragePointsCount;
   FResonances.Add(LResonance);
 end;
 
@@ -869,6 +890,95 @@ begin
   Result := FPhaseDerivativeReducedImageData.PxToValue(ATop);
 end;
 
+{ TSmoothFreqData }
+
+constructor TSmoothFreqData.Create(const AResonanceIndex, AMovingAveragePointsCount: Integer);
+begin
+  inherited Create;
+  ResonanceIndex := AResonanceIndex;
+  FrequencyMovingAveragePointsCount := AMovingAveragePointsCount;
+  SetLength(TimeSmooth, 0);
+  SetLength(ResonanceFrequencyHzSmooth, 0);
+end;
+
+destructor TSmoothFreqData.Destroy;
+begin
+  Finalize(TimeSmooth);
+  Finalize(ResonanceFrequencyHzSmooth);
+  inherited Destroy;
+end;
+
+procedure TSmoothFreqData.Recalc(AMeasurementResults: TObjectList<TResonanceMeasurementResult>; const AFromIndex: Integer);
+var
+  LSourceArrayLength, LSmoothArrayLength, i, j: Integer;
+  LXSum, LYSum: Double;
+  LResonanceMeasurementResult: TResonanceMeasurementResult;
+  LTimeSource: TDateTimeArray;
+  LResonanceFrequencyHzSource: TDoubleArray;
+begin
+  if AFromIndex >= AMeasurementResults.Count then
+    begin
+      SetLength(TimeSmooth, 0);
+      SetLength(ResonanceFrequencyHzSmooth, 0);
+      Exit;
+    end;
+
+  LSourceArrayLength := 0;
+  for i := AFromIndex to AMeasurementResults.Count - 1 do
+    begin
+      LResonanceMeasurementResult := AMeasurementResults[i];
+      if LResonanceMeasurementResult.ResonanceNumber = ResonanceIndex then
+        Inc(LSourceArrayLength);
+    end;
+  LSmoothArrayLength := LSourceArrayLength - FrequencyMovingAveragePointsCount + 1;
+  if (LSmoothArrayLength > LSourceArrayLength) then
+    raise Exception.Create('TSmoothFreqData.SetMovingAveragePointsCount wrong points count');
+
+  if (LSmoothArrayLength <= 0) then
+    begin
+      SetLength(TimeSmooth, 0);
+      SetLength(ResonanceFrequencyHzSmooth, 0);
+      Exit;
+    end;
+
+  SetLength(LTimeSource, LSourceArrayLength);
+  SetLength(LResonanceFrequencyHzSource, LSourceArrayLength);
+  j := 0;
+  for i := AFromIndex to AMeasurementResults.Count - 1 do
+    begin
+      LResonanceMeasurementResult := AMeasurementResults[i];
+      if LResonanceMeasurementResult.ResonanceNumber = ResonanceIndex then
+        begin
+          LTimeSource[j] := LResonanceMeasurementResult.StartTime;
+          LResonanceFrequencyHzSource[j] := LResonanceMeasurementResult.ResonanceParameters.ResonantFrequency;
+          Inc(j);
+        end;
+    end;
+
+  if FrequencyMovingAveragePointsCount = 1 then
+    begin
+      TimeSmooth := LTimeSource;
+      ResonanceFrequencyHzSmooth := LResonanceFrequencyHzSource;
+    end
+  else
+    begin
+      SetLength(TimeSmooth, LSmoothArrayLength);
+      SetLength(ResonanceFrequencyHzSmooth, LSmoothArrayLength);
+      for i := 0 to LSmoothArrayLength - 1 do
+        begin
+          LXSum := 0;
+          LYSum := 0;
+          for j := 0 to FrequencyMovingAveragePointsCount - 1 do
+            begin
+              LXSum := LXSum + LTimeSource[i + j];
+              LYSum := LYSum + LResonanceFrequencyHzSource[i + j];
+            end;
+          TimeSmooth[i] := LXSum / FrequencyMovingAveragePointsCount;
+          ResonanceFrequencyHzSmooth[i] := LYSum / FrequencyMovingAveragePointsCount;
+        end;
+    end;
+end;
+
 { TFileSaver }
 
 procedure TFileSaver.Lock;
@@ -1069,30 +1179,30 @@ begin
       begin
         for i := 0 to FResonancesCount - 1 do
           begin
-            FExcelSheet.Cells[1, i * 7 + 1].Value := AStartTime;
-            FExcelSheet.Columns[i * 7 + 1].ColumnWidth := DEFAULT_COLUMN_WIDTH;
-            FExcelSheet.Cells[1, i * 7 + 2].Value := 'Время';
-            FExcelSheet.Columns[i * 7 + 2].ColumnWidth := DEFAULT_COLUMN_WIDTH;
-            FExcelSheet.Cells[1, i * 7 + 3].Value := 'Частота резонанса, Гц';
-            FExcelSheet.Columns[i * 7 + 3].ColumnWidth := DEFAULT_COLUMN_WIDTH;
-            FExcelSheet.Cells[1, i * 7 + 4].Value := 'Сопротивление, Ом';
-            FExcelSheet.Columns[i * 7 + 4].ColumnWidth := DEFAULT_COLUMN_WIDTH;
-            if FFourierAnalysis then
-              begin
-                FExcelSheet.Cells[1, i * 7 + 5].Value := 'Добротность';
-                FExcelSheet.Columns[i * 7 + 5].ColumnWidth := DEFAULT_COLUMN_WIDTH;
-              end;
+            FExcelSheet.Cells[1, i * 8 + 1].Value := TimeToStr(AStartTime);
+            FExcelSheet.Columns[i * 8 + 1].ColumnWidth := TIME_COLUMN_WIDTH;
+            FExcelSheet.Cells[1, i * 8 + 2].Value := 'Время';
+            FExcelSheet.Columns[i * 8 + 2].ColumnWidth := TIME_COLUMN_WIDTH;
+            FExcelSheet.Cells[1, i * 8 + 3].Value := 'Частота резонанса, Гц';
+            FExcelSheet.Columns[i * 8 + 3].ColumnWidth := DEFAULT_COLUMN_WIDTH;
+            FExcelSheet.Cells[1, i * 8 + 4].Value := 'Сопротивление, Ом';
+            FExcelSheet.Columns[i * 8 + 4].ColumnWidth := DEFAULT_COLUMN_WIDTH;
+            FExcelSheet.Cells[1, i * 8 + 5].Value := 'Добротность';
+            FExcelSheet.Columns[i * 8 + 5].ColumnWidth := DEFAULT_COLUMN_WIDTH;
+            FExcelSheet.Columns[i * 8 + 6].ColumnWidth := HIDE_COLUMN_WIDTH;
+            FExcelSheet.Columns[i * 8 + 7].ColumnWidth := DEFAULT_COLUMN_WIDTH;
           end;
         SetLength(FChartObjects, FResonancesCount);
         SetLength(FCharts, FResonancesCount);
         for i := 0 to FResonancesCount - 1 do
           begin
             FChartObjects[i] := FExcelSheet.ChartObjects.Add(
-                FExcelSheet.Cells[2, (FResonancesCount - 1) * 7 + 6].Left,
-                FExcelSheet.Cells[2, i * 7 + 6].Top + i * 250,
+                FExcelSheet.Cells[2, (FResonancesCount - 1) * 8 + 9].Left,
+                FExcelSheet.Cells[2, i * 8 + 9].Top + i * 250,
                 400, 200);
             FCharts[i] := FChartObjects[i].Chart;
             FCharts[i].ChartType := 75;
+            FCharts[i].SeriesCollection.NewSeries;
             FCharts[i].SeriesCollection.NewSeries;
             FCharts[i].SetElement(100);
           end;
@@ -1112,12 +1222,12 @@ begin
             FExcelSheet.Cells[1, 5].Value := 'Фаза';
             FExcelSheet.Columns[5].ColumnWidth := DEFAULT_COLUMN_WIDTH;
             FExcelSheet.Cells[1, 6].Value := 'Вр. нач./кон.';
-            FExcelSheet.Columns[6].ColumnWidth := DEFAULT_COLUMN_WIDTH;
+            FExcelSheet.Columns[6].ColumnWidth := TIME_COLUMN_WIDTH;
           end
         else
           begin
             FExcelSheet.Cells[1, 5].Value := 'Вр. нач./кон.';
-            FExcelSheet.Columns[5].ColumnWidth := DEFAULT_COLUMN_WIDTH;
+            FExcelSheet.Columns[5].ColumnWidth := TIME_COLUMN_WIDTH;
           end;
 
         SetLength(FChartObjects, 1);
@@ -1139,7 +1249,7 @@ begin
   end;
 end;
 
-procedure TExcelSaver.AddNewResult(const AResonanceIndex: Integer; ASource: TResonanceMeasurementResult);
+procedure TExcelSaver.AddNewResult(const AResonanceIndex: Integer; ASource: TResonanceMeasurementResult; const AStartTime: TDateTime);
 var
   LVals: Variant;
   i, j: Integer;
@@ -1155,18 +1265,17 @@ begin
       begin
         j := FResonancesCursors[AResonanceIndex];
 
-        FExcelSheet.Cells[j, AResonanceIndex * 7 + 2].Value := ASource.StartTime;
-        FExcelSheet.Cells[j, AResonanceIndex * 7 + 1].Value :=
-            '=(' + GetCellCoordinates(j, AResonanceIndex * 7 + 2) + '-' + GetCellCoordinates(1, AResonanceIndex * 7 + 1) + ')*24*60';
-        FExcelSheet.Cells[j, AResonanceIndex * 7 + 3].Value := ASource.ResonanceParameters.ResonantFrequency;
-        FExcelSheet.Cells[j, AResonanceIndex * 7 + 4].Value := ASource.ResonanceParameters.ResonantResistance;
-        if FFourierAnalysis then
-          FExcelSheet.Cells[j, AResonanceIndex * 7 + 5].Value := ASource.ResonanceParameters.QualityFactor;
+        FExcelSheet.Cells[j, AResonanceIndex * 8 + 2].Value := TimeToStr(ASource.StartTime);
+        FExcelSheet.Cells[j, AResonanceIndex * 8 + 1].Value := (ASource.StartTime - AStartTime) * 24 * 60 * 60;
+        FExcelSheet.Cells[j, AResonanceIndex * 8 + 3].Value := ASource.ResonanceParameters.ResonantFrequency;
+        FExcelSheet.Cells[j, AResonanceIndex * 8 + 4].Value := ASource.ResonanceParameters.ResonantResistance;
+        if ASource.ResonanceParameters.FourierAnalysis then
+          FExcelSheet.Cells[j, AResonanceIndex * 8 + 5].Value := ASource.ResonanceParameters.QualityFactor;
 
         FCharts[AResonanceIndex].SeriesCollection[1].XValues := '=' + FExcelSheet.Name + '!' +
-            GetCellCoordinates(2, AResonanceIndex * 7 + 1) + ':' + GetCellCoordinates(j, AResonanceIndex * 7 + 1);
+            GetCellCoordinates(2, AResonanceIndex * 8 + 1) + ':' + GetCellCoordinates(j, AResonanceIndex * 8 + 1);
         FCharts[AResonanceIndex].SeriesCollection[1].Values := '=' + FExcelSheet.Name + '!' +
-            GetCellCoordinates(2, AResonanceIndex * 7 + 3) + ':' + GetCellCoordinates(j, AResonanceIndex * 7 + 3);
+            GetCellCoordinates(2, AResonanceIndex * 8 + 3) + ':' + GetCellCoordinates(j, AResonanceIndex * 8 + 3);
 
         Inc(FResonancesCursors[AResonanceIndex]);
       end
@@ -1188,14 +1297,14 @@ begin
         if FFourierAnalysis then
           begin
             FExcelSheet.Range[FExcelSheet.Cells[2, 1], FExcelSheet.Cells[ASource.ArraysLength + 1, 5]].Value := LVals;
-            FExcelSheet.Cells[2, 6].Value := ASource.StartTime;
-            FExcelSheet.Cells[3, 6].Value := ASource.StopTime;
+            FExcelSheet.Cells[2, 6].Value := TimeToStr(ASource.StartTime);
+            FExcelSheet.Cells[3, 6].Value := TimeToStr(ASource.StopTime);
           end
         else
           begin
             FExcelSheet.Range[FExcelSheet.Cells[2, 1], FExcelSheet.Cells[ASource.ArraysLength + 1, 4]].Value := LVals;
-            FExcelSheet.Cells[2, 5].Value := ASource.StartTime;
-            FExcelSheet.Cells[3, 5].Value := ASource.StopTime;
+            FExcelSheet.Cells[2, 5].Value := TimeToStr(ASource.StartTime);
+            FExcelSheet.Cells[3, 5].Value := TimeToStr(ASource.StopTime);
           end;
         LVals := Unassigned;
 
@@ -1226,11 +1335,56 @@ begin
     j := FResonancesCursors[AResonanceIndex];
     if FSeries then
       begin
-        FExcelSheet.Cells[j, AResonanceIndex * 7 + 1].Value := ASource.StartTime;
+        FExcelSheet.Cells[j, AResonanceIndex * 7 + 1].Value := TimeToStr(ASource.StartTime);
         FExcelSheet.Cells[j, AResonanceIndex * 7 + 2].Value := ASource.ResonanceParameters.ResonantFrequency;
         FExcelSheet.Cells[j, AResonanceIndex * 7 + 3].Value := ASource.ResonanceParameters.ResonantResistance;
         if FFourierAnalysis then
           FExcelSheet.Cells[j, AResonanceIndex * 7 + 4].Value := ASource.ResonanceParameters.QualityFactor;
+      end;
+    FExcelBook.Save;
+  finally
+    Unlock;
+  end;
+end;
+
+procedure TExcelSaver.WriteSmoothedFrequency(ASource: TSmoothFreqData; const AStartTime: TDateTime);
+var
+  i, cnt, top_cell, left_cell: Integer;
+  LVals: Variant;
+begin
+  Lock;
+  try
+    if not FCanSave then
+      Exit;
+    if (ASource.ResonanceIndex < 0) or (ASource.ResonanceIndex >= FResonancesCount) then
+      Exit;
+    if not FSeries then
+      Exit;
+
+    left_cell := ASource.ResonanceIndex * 8 + 6;
+    FExcelSheet.Range[
+        FExcelSheet.Cells[2, left_cell],
+        FExcelSheet.Cells[FResonancesCursors[ASource.ResonanceIndex], left_cell + 1]].Clear;
+    cnt := Length(ASource.ResonanceFrequencyHzSmooth);
+    if cnt > 0 then
+      begin
+        LVals := VarArrayCreate([0, cnt - 1, 0, 1], varVariant);
+        for i := 0 to cnt - 1 do
+          begin
+            LVals[i, 0] := (ASource.TimeSmooth[i] - AStartTime) * 24 * 60 * 60;
+            LVals[i, 1] := ASource.ResonanceFrequencyHzSmooth[i];
+          end;
+        top_cell := 1 + ASource.FrequencyMovingAveragePointsCount;
+        FExcelSheet.Range[
+            FExcelSheet.Cells[top_cell, left_cell],
+            FExcelSheet.Cells[top_cell + cnt - 1, left_cell + 1]].Value := LVals;
+
+        FCharts[ASource.ResonanceIndex].SeriesCollection[2].XValues := '=' + FExcelSheet.Name + '!' +
+            GetCellCoordinates(top_cell, left_cell) + ':' + GetCellCoordinates(top_cell + cnt - 1, left_cell);
+        FCharts[ASource.ResonanceIndex].SeriesCollection[2].Values := '=' + FExcelSheet.Name + '!' +
+            GetCellCoordinates(top_cell, left_cell + 1) + ':' + GetCellCoordinates(top_cell + cnt - 1, left_cell + 1);
+
+        LVals := Unassigned;
       end;
     FExcelBook.Save;
   finally
@@ -1262,8 +1416,11 @@ begin
         FNeedSaveToExcel := AValue;
         if AValue then
           if not FSeries and FHasData then
-            if not AddDataToExcel(LNeedTryAgain, LErrorDescription) then
-              raise Exception.Create('Не удалось сохранить данные в Excel: ' + LErrorDescription);
+            begin
+              FNeedInitializeExcelSaver := True;
+              if not AddDataToExcel(LNeedTryAgain, LErrorDescription) then
+                raise Exception.Create('Не удалось сохранить данные в Excel: ' + LErrorDescription);
+            end;
       end;
   finally
     Unlock;
@@ -1275,12 +1432,15 @@ begin
   FCriticalSection := TCriticalSection.Create;
   FResonances := TObjectList<TResonanceMeasurementResult>.Create;
   FExcelSaver := TExcelSaver.Create(AFolderPath);
-  FSaveToExcelQueue := TObjectList<TResonanceMeasurementResult>.Create;
+  FMeasurementResults := TObjectList<TResonanceMeasurementResult>.Create;
+  FSmoothFreqData := TObjectList<TSmoothFreqData>.Create;
+  FLastSavedIndex := -1;
 end;
 
 destructor TMeasurementResult.Destroy;
 begin
-  FSaveToExcelQueue.Free;
+  FSmoothFreqData.Free;
+  FMeasurementResults.Free;
   FExcelSaver.Free;
   FResonances.Free;
   FCriticalSection.Free;
@@ -1291,10 +1451,16 @@ procedure TMeasurementResult.Initialize(AParameters: TStartMeasureParameters; co
 var
   i: Integer;
   LItem: TResonanceMeasurementResult;
+  LNeedReinitializeExcel: Boolean;
 begin
   Lock;
   try
-    FStartOfMeasurement := Now;
+
+    LNeedReinitializeExcel :=
+        (FResonances.Count <> AParameters.Resonances.Count) or
+        (FSeries <> AParameters.Series) or
+        (not AParameters.Series);
+
     FResonances.Clear;
     for i := 0 to AParameters.Resonances.Count - 1 do
       begin
@@ -1303,9 +1469,20 @@ begin
         FResonances.Add(LItem);
       end;
     FSeries := AParameters.Series;
-    FNeedInitializeExcelSaver := True;
-    FSaveToExcelQueue.Clear;
-    FHasData := False;
+
+    if LNeedReinitializeExcel then
+      begin
+        FStartOfMeasurement := Now;
+        FNeedInitializeExcelSaver := True;
+        FHasWriteToExcel := False;
+        FMeasurementResults.Clear;
+        FLastSavedIndex := -1;
+        FSmoothFreqData.Clear;
+        for i := 0 to AParameters.Resonances.Count - 1 do
+          FSmoothFreqData.Add(TSmoothFreqData.Create(i, AParameters.Resonances[i].FrequencyMovingAveragePointsCount));
+        FHasData := False;
+      end;
+
     FInitialized := True;
   finally
     Unlock;
@@ -1326,7 +1503,8 @@ begin
       begin
         LQueuedItem := TResonanceMeasurementResult.Create;
         LQueuedItem.AssignFrom(LItem, False);
-        FSaveToExcelQueue.Add(LQueuedItem);
+        FMeasurementResults.Add(LQueuedItem);
+        FSmoothFreqData[AResonanceIndex].Recalc(FMeasurementResults, FFirstItemIndexInExcel);
       end;
     FHasData := True;
   finally
@@ -1408,6 +1586,25 @@ begin
     FResonances[AResonanceIndex].PhaseMovingAveragePointsCount := APhasePointsCount;
     FResonances[AResonanceIndex].PhaseDerivativeMovingAveragePointsCount := APhaseDerivativePointsCount;
     FResonances[AResonanceIndex].UpdateResonanceParameters;
+  finally
+    Unlock;
+  end;
+end;
+
+procedure TMeasurementResult.SetFrequencyMovingAverageParams(const AResonanceIndex, AFrequencyPointsCount: Integer);
+begin
+  Lock;
+  try
+    if not FInitialized then
+      Exit;
+    if (AResonanceIndex < 0) or (AResonanceIndex >= FSmoothFreqData.Count) then
+      raise Exception.Create('TMeasurementResult.SetMovingAverageParams index out of range');
+    if (AFrequencyPointsCount < 1) then
+      raise Exception.Create('Wrong frequency points count');
+
+    FSmoothFreqData[AResonanceIndex].FrequencyMovingAveragePointsCount := AFrequencyPointsCount;
+    FSmoothFreqData[AResonanceIndex].Recalc(FMeasurementResults, FFirstItemIndexInExcel);
+    WriteSmoothedFrequencyToExcel(AResonanceIndex);
   finally
     Unlock;
   end;
@@ -1502,6 +1699,9 @@ function TMeasurementResult.AddDataToExcel(out ANeedTryAgain: Boolean; out AErro
 var
   LFourierAnalysis: Boolean;
   LResonance: TResonanceMeasurementResult;
+  LSmoothFreqData: TSmoothFreqData;
+  LUpdatedResonances: array of Boolean;
+  i: Integer;
 begin
   Result := False;
   ANeedTryAgain := False;
@@ -1522,21 +1722,33 @@ begin
                 Break;
               end;
           FExcelSaver.Initialize(GetFileNameOfDateTime(FStartOfMeasurement), FResonances.Count, FSeries, LFourierAnalysis, FStartOfMeasurement);
+          FFirstItemIndexInExcel := FLastSavedIndex + 1;
+          for LSmoothFreqData in FSmoothFreqData do
+            LSmoothFreqData.Recalc(FMeasurementResults, FFirstItemIndexInExcel);
           FNeedInitializeExcelSaver := False;
         end;
       if FSeries then
         begin
-          while FSaveToExcelQueue.Count > 0 do
+          LResonance := nil;
+          SetLength(LUpdatedResonances, FResonances.Count);
+          for i := 0 to FResonances.Count - 1 do
+            LUpdatedResonances[i] := False;
+          while FLastSavedIndex < FMeasurementResults.Count - 1 do
             begin
-              LResonance := FSaveToExcelQueue[0];
-              FExcelSaver.AddNewResult(LResonance.ResonanceNumber, LResonance);
-              FSaveToExcelQueue.Delete(0);
+              LResonance := FMeasurementResults[FLastSavedIndex + 1];
+              FExcelSaver.AddNewResult(LResonance.ResonanceNumber, LResonance, FStartOfMeasurement);
+              LUpdatedResonances[LResonance.ResonanceNumber] := True;
+              Inc(FLastSavedIndex);
             end;
+          for i := 0 to FResonances.Count - 1 do
+            if LUpdatedResonances[i] then
+              FExcelSaver.WriteSmoothedFrequency(FSmoothFreqData[i], FStartOfMeasurement);
         end
       else
         begin
-          FExcelSaver.AddNewResult(0, FResonances[0]);
+          FExcelSaver.AddNewResult(0, FResonances[0], FStartOfMeasurement);
         end;
+      FHasWriteToExcel := True;
       Result := True;
     except
       on E: EOleSysError do
@@ -1544,10 +1756,16 @@ begin
           AErrorDescription := E.Message;
           ANeedTryAgain := (EOleSysError(E).ErrorCode = -2147418111) or (EOleSysError(E).ErrorCode = -2146777998);
           if not ANeedTryAgain then
-            FNeedInitializeExcelSaver := True;
+            begin
+              FNeedSaveToExcel := False;
+              FHasWriteToExcel := False;
+              FNeedInitializeExcelSaver := True;
+            end;
         end;
       on E: Exception do
         begin
+          FNeedSaveToExcel := False;
+          FHasWriteToExcel := False;
           FNeedInitializeExcelSaver := True;
           raise;
         end;
@@ -1566,9 +1784,9 @@ begin
   try
     if FHasData and FNeedSaveToExcel and not FNeedInitializeExcelSaver then
       begin
-        for i := FSaveToExcelQueue.Count - 1 downto 0 do
+        for i := FMeasurementResults.Count - 1 downto 0 do
           begin
-            LQueuedItem := FSaveToExcelQueue[i];
+            LQueuedItem := FMeasurementResults[i];
             if LQueuedItem.ResonanceNumber = AResonanceIndex then
               begin
                 LQueuedItem.AssignFrom(FResonances[AResonanceIndex], False);
@@ -1577,6 +1795,17 @@ begin
           end;
         FExcelSaver.UpdateLastResult(AResonanceIndex, FResonances[AResonanceIndex]);
       end;
+  finally
+    Unlock;
+  end;
+end;
+
+procedure TMeasurementResult.WriteSmoothedFrequencyToExcel(const AResonanceIndex: Integer);
+begin
+  Lock;
+  try
+    if FHasData and FHasWriteToExcel and not FNeedInitializeExcelSaver then
+      FExcelSaver.WriteSmoothedFrequency(FSmoothFreqData[AResonanceIndex], FStartOfMeasurement);
   finally
     Unlock;
   end;

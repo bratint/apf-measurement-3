@@ -42,6 +42,13 @@ type
     shWatch: TShape;
     lblDelay: TLabel;
     edDelay: TEdit;
+    pnMagnitudePhaseSmooth: TPanel;
+    pnFrequencySmooth: TPanel;
+    lblFreqSmooth: TLabel;
+    lblFreqN: TLabel;
+    seFreqN: TSpinEdit;
+    btnFreqNApply: TBitBtn;
+    btnFreqNCancel: TBitBtn;
     procedure btnFreqApplyClick(Sender: TObject);
     procedure btnNApplyClick(Sender: TObject);
     procedure chWatchClick(Sender: TObject);
@@ -55,14 +62,18 @@ type
     procedure btnFreqCancelClick(Sender: TObject);
     procedure btnNCancelClick(Sender: TObject);
     procedure edDelayChange(Sender: TObject);
+    procedure seFreqNChange(Sender: TObject);
+    procedure btnFreqNApplyClick(Sender: TObject);
+    procedure btnFreqNCancelClick(Sender: TObject);
   private
     FControlsUpdating: Boolean;
     FEditFreqChanged, FEditPlusChanged, FEditMinusChanged, FEditStepsChanged, FEditDelayChanged: Boolean;
     FCurrentWatch: Boolean;
     FCurrentFreq, FCurrentPlus, FCurrentMinus: Double;
-    FCurrentSteps, FCurrentDelay, FCurrentAmplitudeN, FCurrentPhaseN, FCurrentPhaseDN: Integer;
+    FCurrentSteps, FCurrentDelay, FCurrentAmplitudeN, FCurrentPhaseN, FCurrentPhaseDN, FFreqN: Integer;
     procedure SetFreqControlsDefaultState;
     procedure SetNControlsDefaultState;
+    procedure SetFreqNControlsDefaultState;
   public
     ResonanceIndex: Integer;
     procedure UpdateControls(const AResonanceParameters: TResonanceParameters; const AResonanceWatchingData: TResonanceWatchingData);
@@ -95,6 +106,23 @@ begin
 
   FControlsUpdating := False;
   SetFreqControlsDefaultState;
+end;
+
+procedure TfrmResonance.btnFreqNApplyClick(Sender: TObject);
+begin
+  AdcManager.MeasurementResult.SetFrequencyMovingAverageParams(ResonanceIndex, seFreqN.Value);
+  FFreqN := seFreqN.Value;
+  SetFreqNControlsDefaultState;
+end;
+
+procedure TfrmResonance.btnFreqNCancelClick(Sender: TObject);
+begin
+  FControlsUpdating := True;
+
+  seFreqN.Value := FFreqN;
+
+  FControlsUpdating := False;
+  SetFreqNControlsDefaultState;
 end;
 
 procedure TfrmResonance.btnNApplyClick(Sender: TObject);
@@ -201,6 +229,17 @@ begin
     end;
 end;
 
+procedure TfrmResonance.seFreqNChange(Sender: TObject);
+begin
+  if FControlsUpdating then Exit;
+  if MeasureWasStarted then
+    begin
+      seFreqN.Color := CL_CHANGED_EDIT;
+      btnFreqNApply.Show;
+      btnFreqNCancel.Show;
+    end;
+end;
+
 procedure TfrmResonance.sePhaseDNChange(Sender: TObject);
 begin
   if FControlsUpdating then Exit;
@@ -248,6 +287,13 @@ begin
   sePhaseDN.Color := clWindow;
   btnNApply.Hide;
   btnNCancel.Hide;
+end;
+
+procedure TfrmResonance.SetFreqNControlsDefaultState;
+begin
+  seFreqN.Color := clWindow;
+  btnFreqNApply.Hide;
+  btnFreqNCancel.Hide;
 end;
 
 procedure TfrmResonance.UpdateControls(const AResonanceParameters: TResonanceParameters; const AResonanceWatchingData: TResonanceWatchingData);
@@ -320,8 +366,10 @@ begin
   FCurrentAmplitudeN := AParams.MagnitudeMovingAveragePointsCount;
   FCurrentPhaseN := AParams.PhaseMovingAveragePointsCount;
   FCurrentPhaseDN := AParams.PhaseDerivativeMovingAveragePointsCount;
+  FFreqN := AParams.FrequencyMovingAveragePointsCount;
   SetFreqControlsDefaultState;
   SetNControlsDefaultState;
+  SetFreqNControlsDefaultState;
 end;
 
 end.

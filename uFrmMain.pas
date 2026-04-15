@@ -193,7 +193,10 @@ begin
           StrToInt(lFrame.edSteps.Text),
           StrToInt(lFrame.edDelay.Text),
           lFrame.chWatch.Checked,
-          lFrame.seAmplitudeN.Value, lFrame.sePhaseN.Value, lFrame.sePhaseDN.Value);
+          lFrame.seAmplitudeN.Value,
+          lFrame.sePhaseN.Value,
+          lFrame.sePhaseDN.Value,
+          lFrame.seFreqN.Value);
 
     if not AdcManager.StartMeasure(lParams, lText) then
       ShowMessage(lText)
