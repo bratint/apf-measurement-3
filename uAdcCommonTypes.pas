@@ -1729,7 +1729,6 @@ begin
         end;
       if FSeries then
         begin
-          LResonance := nil;
           SetLength(LUpdatedResonances, FResonances.Count);
           for i := 0 to FResonances.Count - 1 do
             LUpdatedResonances[i] := False;
