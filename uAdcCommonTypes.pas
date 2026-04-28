@@ -1375,7 +1375,7 @@ begin
         LVals := VarArrayCreate([0, cnt - 1, 0, 1], varVariant);
         for i := 0 to cnt - 1 do
           begin
-            LVals[i, 0] := (ASource.TimeSmooth[i] - AStartTime) * 24 * 60 * 60;
+            LVals[i, 0] := (ASource.TimeSmooth[i] - AStartTime) * 24 * 60;
             LVals[i, 1] := ASource.ResonanceFrequencyHzSmooth[i];
           end;
         top_cell := 1 + ASource.FrequencyMovingAveragePointsCount;
@@ -1503,6 +1503,11 @@ begin
         for i := 0 to AParameters.Resonances.Count - 1 do
           FSmoothFreqData.Add(TSmoothFreqData.Create(i, AParameters.Resonances[i].FrequencyMovingAveragePointsCount));
         FHasData := False;
+      end
+    else
+      begin
+        for i := 0 to AParameters.Resonances.Count - 1 do
+          FSmoothFreqData[i].FrequencyMovingAveragePointsCount := AParameters.Resonances[i].FrequencyMovingAveragePointsCount;
       end;
 
     FInitialized := True;
