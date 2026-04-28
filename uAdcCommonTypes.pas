@@ -198,7 +198,7 @@ type
 
   TExcelSaver = class
   private const
-    DEFAULT_COLUMN_WIDTH = 10;
+    DEFAULT_COLUMN_WIDTH = 8;
     TIME_COLUMN_WIDTH = 8;
     HIDE_COLUMN_WIDTH = 1;
   private
@@ -214,6 +214,7 @@ type
     FFourierAnalysis: Boolean;
     FResonancesCount: Integer;
     FResonancesCursors: array of Int64;
+    FSmoothedFrequencyVisible: array of Boolean;
     procedure Lock; inline;
     procedure Unlock; inline;
     function GetCellCoordinates(const ARow, ACol: Integer): String; inline;
@@ -1174,6 +1175,9 @@ begin
     SetLength(FResonancesCursors, FResonancesCount);
     for i := 0 to FResonancesCount - 1 do
       FResonancesCursors[i] := 2;
+    SetLength(FSmoothedFrequencyVisible, FResonancesCount);
+    for i := 0 to FResonancesCount - 1 do
+      FSmoothedFrequencyVisible[i] := False;
 
     if FSeries then
       begin
@@ -1183,14 +1187,14 @@ begin
             FExcelSheet.Columns[i * 8 + 1].ColumnWidth := TIME_COLUMN_WIDTH;
             FExcelSheet.Cells[1, i * 8 + 2].Value := 'Время';
             FExcelSheet.Columns[i * 8 + 2].ColumnWidth := TIME_COLUMN_WIDTH;
-            FExcelSheet.Cells[1, i * 8 + 3].Value := 'Частота резонанса, Гц';
+            FExcelSheet.Cells[1, i * 8 + 3].Value := 'f, Гц';
             FExcelSheet.Columns[i * 8 + 3].ColumnWidth := DEFAULT_COLUMN_WIDTH;
-            FExcelSheet.Cells[1, i * 8 + 4].Value := 'Сопротивление, Ом';
+            FExcelSheet.Cells[1, i * 8 + 4].Value := 'R, Ом';
             FExcelSheet.Columns[i * 8 + 4].ColumnWidth := DEFAULT_COLUMN_WIDTH;
-            FExcelSheet.Cells[1, i * 8 + 5].Value := 'Добротность';
+            FExcelSheet.Cells[1, i * 8 + 5].Value := 'Q';
             FExcelSheet.Columns[i * 8 + 5].ColumnWidth := DEFAULT_COLUMN_WIDTH;
             FExcelSheet.Columns[i * 8 + 6].ColumnWidth := HIDE_COLUMN_WIDTH;
-            FExcelSheet.Columns[i * 8 + 7].ColumnWidth := DEFAULT_COLUMN_WIDTH;
+            FExcelSheet.Columns[i * 8 + 7].ColumnWidth := HIDE_COLUMN_WIDTH;
           end;
         SetLength(FChartObjects, FResonancesCount);
         SetLength(FCharts, FResonancesCount);
@@ -1266,7 +1270,7 @@ begin
         j := FResonancesCursors[AResonanceIndex];
 
         FExcelSheet.Cells[j, AResonanceIndex * 8 + 2].Value := TimeToStr(ASource.StartTime);
-        FExcelSheet.Cells[j, AResonanceIndex * 8 + 1].Value := (ASource.StartTime - AStartTime) * 24 * 60 * 60;
+        FExcelSheet.Cells[j, AResonanceIndex * 8 + 1].Value := (ASource.StartTime - AStartTime) * 24 * 60;
         FExcelSheet.Cells[j, AResonanceIndex * 8 + 3].Value := ASource.ResonanceParameters.ResonantFrequency;
         FExcelSheet.Cells[j, AResonanceIndex * 8 + 4].Value := ASource.ResonanceParameters.ResonantResistance;
         if ASource.ResonanceParameters.FourierAnalysis then
@@ -1386,6 +1390,24 @@ begin
 
         LVals := Unassigned;
       end;
+
+    if ASource.FrequencyMovingAveragePointsCount > 1 then
+      begin
+        if FSmoothedFrequencyVisible[ASource.ResonanceIndex] = False then
+          begin
+            FExcelSheet.Columns[left_cell + 1].ColumnWidth := DEFAULT_COLUMN_WIDTH;
+            FSmoothedFrequencyVisible[ASource.ResonanceIndex] := True;
+          end;
+      end
+    else
+      begin
+        if FSmoothedFrequencyVisible[ASource.ResonanceIndex] = True then
+          begin
+            FExcelSheet.Columns[left_cell + 1].ColumnWidth := HIDE_COLUMN_WIDTH;
+            FSmoothedFrequencyVisible[ASource.ResonanceIndex] := False;
+          end;
+      end;
+
     FExcelBook.Save;
   finally
     Unlock;
