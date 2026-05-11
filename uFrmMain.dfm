@@ -206,12 +206,12 @@ object frmMain: TfrmMain
         TabOrder = 6
         OnClick = chExcelClick
       end
-      object chSeries: TCheckBox
+      object chNotSeries: TCheckBox
         Left = 12
         Top = 232
         Width = 69
         Height = 17
-        Caption = #1057#1077#1088#1080#1103
+        Caption = #1040#1063#1061
         TabOrder = 7
       end
       object edResonancesCount: TEdit

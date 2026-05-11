@@ -41,7 +41,7 @@ type
     lblDacOutput: TLabel;
     btnDacOutputApply: TBitBtn;
     chExcel: TCheckBox;
-    chSeries: TCheckBox;
+    chNotSeries: TCheckBox;
     lblCalculationKind: TLabel;
     lblResonances: TLabel;
     edResonancesCount: TEdit;
@@ -184,7 +184,7 @@ begin
       2: lParams.OutputSignalChannelRange := air3000mV;
       else lParams.OutputSignalChannelRange := air3000mV;
     end;
-    lParams.Series := chSeries.Checked;
+    lParams.Series := not chNotSeries.Checked;
     for lFrame in FResonances do
       lParams.AddResonance(
           StrToFloat(lFrame.edFreq.Text),
@@ -283,7 +283,7 @@ begin
   edResonancesCount.Text := IntToStr(FResonances.Count);
   cbResonances.Items.Add(IntToStr(FResonances.Count));
   if FResonances.Count > 1 then
-    chSeries.Checked := True;
+    chNotSeries.Checked := False;
 end;
 
 procedure TfrmMain.FormCreate(Sender: TObject);
@@ -404,7 +404,7 @@ begin
   btnStop.Enabled := AMeasuring;
   rbStandartDeviation.Enabled := not AMeasuring;
   rbFourierTransform.Enabled := not AMeasuring;
-  chSeries.Enabled := not AMeasuring;
+  chNotSeries.Enabled := not AMeasuring;
   btnDeleteResonance.Enabled := not AMeasuring;
   btnAddResonance.Enabled := not AMeasuring;
   frmSettings.edBlocksToReadCount.Enabled := not AMeasuring;

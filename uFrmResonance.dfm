@@ -67,6 +67,8 @@ object frmResonance: TfrmResonance
       Width = 137
       Height = 17
       Caption = #1057#1083#1077#1076#1080#1090#1100' '#1079#1072' '#1088#1077#1079#1086#1085#1072#1085#1089#1086#1084
+      Checked = True
+      State = cbChecked
       TabOrder = 0
       OnClick = chWatchClick
     end
