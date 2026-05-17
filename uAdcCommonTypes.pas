@@ -1201,9 +1201,9 @@ begin
         for i := 0 to FResonancesCount - 1 do
           begin
             FChartObjects[i] := FExcelSheet.ChartObjects.Add(
-                FExcelSheet.Cells[2, (FResonancesCount - 1) * 8 + 9].Left,
-                FExcelSheet.Cells[2, i * 8 + 9].Top + i * 250,
-                400, 200);
+                FExcelSheet.Cells[3, i * 8 + 1].Left,
+                50,
+                300, 200);
             FCharts[i] := FChartObjects[i].Chart;
             FCharts[i].ChartType := 75;
             FCharts[i].SeriesCollection.NewSeries;
